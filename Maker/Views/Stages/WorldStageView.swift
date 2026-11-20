@@ -11,7 +11,6 @@ import SwiftUI
 
 struct WorldStageView: View {
     @EnvironmentObject private var store: MakerStore
-    @Environment(\.horizontalSizeClass) private var horizontalSize
 
     @State private var camera = ViewportCamera()
     @State private var tool: ViewportTool = .move
@@ -25,11 +24,11 @@ struct WorldStageView: View {
     @State private var showingMap = false
 
     var body: some View {
-        Group {
-            if horizontalSize == .compact {
-                compactLayout
+        GeometryReader { geo in
+            if geo.size.width >= StageLayout.wideWidth, geo.size.height >= StageLayout.wideHeight {
+                wideLayout(size: geo.size)
             } else {
-                regularLayout
+                pageLayout(size: geo.size)
             }
         }
         .sheet(isPresented: $showingDetails) {
@@ -64,68 +63,115 @@ struct WorldStageView: View {
         AudioEngine.shared.playMusic(mood, owner: "editor")
     }
 
-    // MARK: Regular layout
+    // MARK: Wide layout
 
-    private var regularLayout: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                viewport
-
-                HStack(alignment: .top, spacing: 12) {
-                    floatingPanel(width: 300, maxHeight: geo.size.height - 30) {
-                        WorldSidebar(onShowMap: { showingMap = true })
-                    }
-
-                    Spacer(minLength: 30)
-
-                    VStack(alignment: .trailing, spacing: 10) {
-                        floatingPanel(width: 252, maxHeight: geo.size.height - 140) {
-                            WorldInspector(onDetails: { showingDetails = true })
-                        }
-                        Spacer(minLength: 0)
-                        if !showsMap {
-                            ViewportToolColumn(tool: $tool, showsPalette: $showsPalette)
-                        }
-                    }
-                    .frame(width: 252)
-                }
-                .padding(14)
+    /// On a big screen the level tree, the 3D view and the settings sit side by
+    /// side, each column scrolling on its own, with the viewport taking
+    /// whatever room is left. The tools under the viewport get a fixed share of
+    /// the column and then scroll, so they can never squeeze the view out.
+    private func wideLayout(size: CGSize) -> some View {
+        let column = StageLayout.columnWidth(for: size.width)
+        return HStack(spacing: 0) {
+            ScrollView {
+                WorldSidebar(onShowMap: { showingMap = true })
+                    .padding(16)
             }
-            .overlay(alignment: .bottom) {
-                bottomBar
+            .frame(width: column)
+            .background(Palette.sidebar)
+
+            Divider()
+
+            stageColumn(maxTools: toolsShare(of: size.height))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Palette.background)
+
+            Divider()
+
+            ScrollView {
+                WorldInspector(onDetails: { showingDetails = true })
+                    .padding(16)
+            }
+            .frame(width: column)
+            .background(Palette.sidebar)
+        }
+    }
+
+    private func stageColumn(maxTools: CGFloat) -> some View {
+        VStack(spacing: 10) {
+            viewport
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minHeight: 150)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            BoundedScroll(maxHeight: maxTools) {
+                toolControls
+            }
+        }
+        .padding(14)
+    }
+
+    /// The tool strip, the shelf and the sticker sliders, kept together so
+    /// every layout below and above the fold treats them the same way.
+    private var toolControls: some View {
+        VStack(spacing: 10) {
+            toolRow
+
+            if !showsMap && showsShelf {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    toolShelf
+                }
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            }
+
+            if !showsMap, let sticker = store.currentSticker {
+                StickerEditorBar(sticker: sticker)
             }
         }
     }
 
-    // MARK: Compact layout
-
-    private var compactLayout: some View {
-        VStack(spacing: 0) {
-            viewport
-                .frame(height: 300)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-
+    /// The tool strip beside the 3D/Map switch. With room to spare the whole
+    /// strip shows at once; in a row too narrow for it the switch moves onto a
+    /// line of its own so the strip never gets cut through the middle of a
+    /// tool.
+    private var toolRow: some View {
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
                 if !showsMap {
-                    ViewportToolColumn(tool: $tool, showsPalette: $showsPalette)
-                        .scaleEffect(0.85, anchor: .leading)
+                    ViewportToolStrip(tool: $tool, showsPalette: $showsPalette)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
                 mapToggle
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
 
-            if !showsMap {
-                toolShelf
-                    .padding(.top, 6)
-                if let sticker = store.currentSticker {
-                    StickerEditorBar(sticker: sticker)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 6)
+            VStack(alignment: .trailing, spacing: 8) {
+                mapToggle
+                if !showsMap {
+                    ViewportToolStrip(tool: $tool, showsPalette: $showsPalette)
                 }
+            }
+        }
+    }
+
+    /// How tall the tools under the viewport may get before they scroll.
+    private func toolsShare(of height: CGFloat) -> CGFloat {
+        max(90, min(260, height * 0.32))
+    }
+
+    // MARK: One page
+
+    /// A window that is narrow or short keeps the 3D view standing still at the
+    /// top and scrolls everything under it. The canvas and the tools are each
+    /// capped to a share of the height, so the lists below always keep their
+    /// room and nothing can be pushed off the bottom of the screen.
+    private func pageLayout(size: CGSize) -> some View {
+        VStack(spacing: 10) {
+            viewport
+                .frame(height: canvasHeight(for: size.height))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            BoundedScroll(maxHeight: toolsShare(of: size.height)) {
+                toolControls
             }
 
             ScrollView {
@@ -133,10 +179,31 @@ struct WorldStageView: View {
                     cardPanel { WorldSidebar(onShowMap: { showingMap = true }) }
                     cardPanel { WorldInspector(onDetails: { showingDetails = true }) }
                 }
-                .padding(14)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+                .frame(maxWidth: 900)
+                .frame(maxWidth: .infinity)
             }
         }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
         .background(Palette.background)
+    }
+
+    /// The canvas takes a share of the height, never so much that the tools and
+    /// the lists under it are pushed off a short screen.
+    private func canvasHeight(for height: CGFloat) -> CGFloat {
+        min(300, max(120, height * 0.32))
+    }
+
+    /// Whether the shelf under the viewport has anything to show for the
+    /// tool in hand.
+    private var showsShelf: Bool {
+        switch tool {
+        case .terrain, .sticker, .texture: return true
+        case .add: return showsPalette
+        case .move, .rotate, .scale: return false
+        }
     }
 
     // MARK: Pieces
@@ -181,25 +248,6 @@ struct WorldStageView: View {
         }
     }
 
-    private var bottomBar: some View {
-        VStack(spacing: 8) {
-            if !showsMap {
-                toolShelf
-                if let sticker = store.currentSticker {
-                    StickerEditorBar(sticker: sticker)
-                        .frame(maxWidth: 620)
-                }
-            }
-            HStack(spacing: 10) {
-                mapToggle
-                if !showsMap {
-                    ViewportOrbitHint(text: hintText)
-                }
-            }
-        }
-        .padding(.bottom, 16)
-    }
-
     @ViewBuilder
     private var toolShelf: some View {
         switch tool {
@@ -215,15 +263,6 @@ struct WorldStageView: View {
             }
         case .move, .rotate, .scale:
             EmptyView()
-        }
-    }
-
-    private var hintText: String {
-        switch tool {
-        case .terrain: return "Drag on the ground to shape it"
-        case .sticker: return "Tap or drag to stick it down · tap one to change it"
-        case .texture: return "Drag to paint the ground · tap a prop to texture it"
-        case .add, .move, .rotate, .scale: return "Drag to orbit · pinch to zoom"
         }
     }
 
@@ -264,25 +303,6 @@ struct WorldStageView: View {
         let clamped = SIMD3<Float>(min(limit, max(-limit, world.x)), 0, min(limit, max(-limit, world.z)))
         store.addEntity(kind, at: IslandTerrain.boardPoint(for: clamped))
         withAnimation(.snappy) { showsPalette = false }
-    }
-
-    private func floatingPanel<Content: View>(
-        width: CGFloat,
-        maxHeight: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            content()
-                .padding(16)
-        }
-        .frame(width: width)
-        .frame(maxHeight: maxHeight, alignment: .top)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.1), radius: 14, y: 5)
     }
 
     private func cardPanel<Content: View>(@ViewBuilder content: () -> Content) -> some View {

@@ -366,6 +366,49 @@ struct WorldViewportView: View {
 
 // MARK: - Floating chrome for the viewport
 
+/// The tool column laid on its side, for a phone: one swipeable row above the
+/// viewport so every tool stays in reach.
+struct ViewportToolStrip: View {
+    @Binding var tool: ViewportTool
+    @Binding var showsPalette: Bool
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(ViewportTool.allCases) { item in
+                    Button {
+                        withAnimation(.snappy(duration: 0.15)) {
+                            tool = item
+                            showsPalette = (item == .add)
+                        }
+                    } label: {
+                        Image(systemName: item.symbol)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(tool == item ? .white : Palette.inkSoft)
+                            .frame(width: 40, height: 40)
+                            .background(background(for: item), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(item.title)
+                }
+            }
+            .padding(6)
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.1), radius: 10, y: 4)
+    }
+
+    private func background(for item: ViewportTool) -> Color {
+        if tool == item { return Palette.accent }
+        return item == .add ? Palette.mint : Palette.surface
+    }
+}
+
 struct ViewportToolColumn: View {
     @Binding var tool: ViewportTool
     @Binding var showsPalette: Bool

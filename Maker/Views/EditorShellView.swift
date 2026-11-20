@@ -10,14 +10,26 @@ import SwiftUI
 
 struct EditorShellView: View {
     @EnvironmentObject private var store: MakerStore
+    @Environment(\.horizontalSizeClass) private var horizontalSize
+
+    private var isCompact: Bool { horizontalSize == .compact }
 
     var body: some View {
         VStack(spacing: 0) {
             topBar
+                .layoutPriority(1)
             Rectangle()
                 .fill(Palette.hairline.opacity(0.6))
                 .frame(height: 1)
             stage
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            if !isCompact {
+                Rectangle()
+                    .fill(Palette.hairline.opacity(0.6))
+                    .frame(height: 1)
+                bottomBar
+            }
         }
         .background(Palette.background)
         .fullScreenCover(isPresented: $store.isPlaying) {
@@ -33,25 +45,60 @@ struct EditorShellView: View {
     // MARK: Top bar
 
     private var topBar: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                backButton
-                titleBlock
-                Spacer(minLength: 8)
-                levelMenu
-            }
-            HStack(spacing: 8) {
-                StageTabBar(selection: $store.selectedTab)
-                Spacer(minLength: 8)
-                ideasButton
-                undoButtons
-                playButton
+        VStack(spacing: 8) {
+            if isCompact {
+                compactHeader
+                compactTabs
+            } else {
+                regularHeader
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, isCompact ? 12 : 16)
         .padding(.top, 8)
         .padding(.bottom, 10)
         .background(Palette.surface)
+    }
+
+    /// A big screen gets one row: the game, the level, and the buttons that act
+    /// on the level. The stage tabs live in a bar of their own at the bottom,
+    /// where a tablet keeps its navigation and where there is always room for
+    /// all six.
+    private var regularHeader: some View {
+        HStack(spacing: 12) {
+            backButton
+            titleBlock
+            Spacer(minLength: 8)
+            levelMenu
+            ideasButton
+            undoButtons
+            playButton
+        }
+    }
+
+    private var bottomBar: some View {
+        StageTabBar(selection: $store.selectedTab)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Palette.surface)
+    }
+
+    /// A phone gets the whole chrome in two rows: the project, the level and
+    /// the buttons that matter up top, every stage tab reachable below.
+    private var compactHeader: some View {
+        HStack(spacing: 8) {
+            backButton
+            compactTitle
+            Spacer(minLength: 4)
+            undoButtons
+            playCircle
+        }
+    }
+
+    private var compactTabs: some View {
+        HStack(spacing: 8) {
+            StageTabBar(selection: $store.selectedTab)
+            ideasButton
+        }
     }
 
     private var backButton: some View {
@@ -79,40 +126,72 @@ struct EditorShellView: View {
         }
     }
 
+    private var compactTitle: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(store.currentProject?.name ?? "Untitled")
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            compactLevelMenu
+        }
+        .layoutPriority(1)
+    }
+
+    @ViewBuilder
+    private var levelMenuContent: some View {
+        if let project = store.currentProject {
+            ForEach(Array(project.levels.enumerated()), id: \.element.id) { index, level in
+                Button {
+                    store.selectedLevelID = level.id
+                    store.selectedEntityID = level.entities.first?.id
+                } label: {
+                    Label("\(index + 1). \(level.name)",
+                          systemImage: level.id == store.selectedLevelID ? "checkmark" : "map")
+                }
+            }
+            Divider()
+        }
+        Button {
+            store.addLevel()
+        } label: {
+            Label("Add a level", systemImage: "plus")
+        }
+    }
+
     private var levelMenu: some View {
         Menu {
-            if let project = store.currentProject {
-                ForEach(Array(project.levels.enumerated()), id: \.element.id) { index, level in
-                    Button {
-                        store.selectedLevelID = level.id
-                        store.selectedEntityID = level.entities.first?.id
-                    } label: {
-                        Label("\(index + 1). \(level.name)",
-                              systemImage: level.id == store.selectedLevelID ? "checkmark" : "map")
-                    }
-                }
-                Divider()
-            }
-            Button {
-                store.addLevel()
-            } label: {
-                Label("Add a level", systemImage: "plus")
-            }
+            levelMenuContent
         } label: {
-            HStack(spacing: 6) {
+            levelMenuLabel(compact: false)
+        }
+    }
+
+    private var compactLevelMenu: some View {
+        Menu {
+            levelMenuContent
+        } label: {
+            levelMenuLabel(compact: true)
+        }
+    }
+
+    private func levelMenuLabel(compact: Bool) -> some View {
+        HStack(spacing: 5) {
+            if !compact {
                 Image(systemName: "map.fill")
                     .font(.caption)
-                Text(store.currentLevel?.name ?? "No level")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .black))
             }
-            .foregroundStyle(Palette.ink)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(Palette.surfaceAlt, in: Capsule())
+            Text(compact
+                 ? "Level \(store.levelIndex + 1) · \(store.currentLevel?.name ?? "No level")"
+                 : (store.currentLevel?.name ?? "No level"))
+                .font(compact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .black))
         }
+        .foregroundStyle(Palette.ink)
+        .padding(.horizontal, compact ? 0 : 11)
+        .padding(.vertical, compact ? 0 : 7)
+        .background(compact ? Color.clear : Palette.surfaceAlt, in: Capsule())
     }
 
     private var undoButtons: some View {
@@ -175,6 +254,20 @@ struct EditorShellView: View {
             .background(Color(hex: "#159957"), in: Capsule())
         }
         .buttonStyle(.plain)
+    }
+
+    private var playCircle: some View {
+        Button {
+            store.isPlaying = true
+        } label: {
+            Image(systemName: "play.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color(hex: "#159957"), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Play the game")
     }
 
     // MARK: Stages

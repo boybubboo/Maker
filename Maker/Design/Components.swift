@@ -10,52 +10,115 @@ import SwiftUI
 
 // MARK: - Stage layout
 
-struct StageScaffold<Sidebar: View, Content: View, Inspector: View>: View {
-    @Environment(\.horizontalSizeClass) var horizontalSize
+/// How much room a stage needs before the three columns are worth it. One
+/// place, because the World stage has to make exactly the same decision as
+/// everything else and must never disagree with the scaffold.
+enum StageLayout {
+    static let wideWidth: CGFloat = 880
+    /// A window this short is better off as one scrolling page whatever its
+    /// width, so nothing gets squeezed into an unusable strip.
+    static let wideHeight: CGFloat = 520
 
+    /// Side columns scale with the screen: an iPad Pro gets roomier ones, and
+    /// the working column always keeps the space in the middle.
+    static func columnWidth(for width: CGFloat) -> CGFloat {
+        min(340, max(240, width * 0.23))
+    }
+}
+
+/// The one page every stage sits in. Wide and tall enough gets the three
+/// columns, each scrolling on its own; anything else becomes a single page
+/// that scrolls from top to bottom, so a stage can never be cropped.
+struct StageScaffold<Sidebar: View, Content: View, Inspector: View>: View {
     var showsInspector: Bool = true
     @ViewBuilder var sidebar: Sidebar
     @ViewBuilder var content: Content
     @ViewBuilder var inspector: Inspector
 
-    private var isCompact: Bool { horizontalSize == .compact }
+    var body: some View {
+        GeometryReader { geo in
+            if geo.size.width >= StageLayout.wideWidth, geo.size.height >= StageLayout.wideHeight {
+                columns(width: geo.size.width)
+            } else {
+                stacked
+            }
+        }
+    }
+
+    private var stacked: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                content
+                sidebar
+                if showsInspector { inspector }
+            }
+            .padding(16)
+            .frame(maxWidth: 900)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Palette.background)
+    }
+
+    private func columns(width: CGFloat) -> some View {
+        let column = StageLayout.columnWidth(for: width)
+        return HStack(spacing: 0) {
+            ScrollView {
+                sidebar.padding(16)
+            }
+            .frame(width: column)
+            .background(Palette.sidebar)
+
+            Divider()
+
+            ScrollView {
+                content.padding(20)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Palette.background)
+
+            if showsInspector {
+                Divider()
+                ScrollView {
+                    inspector.padding(16)
+                }
+                .frame(width: column)
+                .background(Palette.sidebar)
+            }
+        }
+    }
+}
+
+// MARK: - Panels
+
+/// Lets its content keep hugging what is inside it, and scrolls instead once
+/// the content is taller than the room it has, so a panel can never hide the
+/// rest of itself on a small screen.
+struct BoundedScroll<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder var content: Content
+
+    @State private var contentHeight: CGFloat = 0
+
+    private var needsScrolling: Bool { contentHeight > maxHeight + 1 }
 
     var body: some View {
-        if isCompact {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    content
-                    sidebar
-                    if showsInspector { inspector }
+        Group {
+            if needsScrolling {
+                ScrollView(showsIndicators: false) {
+                    content.background(measure)
                 }
-                .padding(16)
+                .frame(height: max(maxHeight, 0))
+            } else {
+                content.background(measure)
             }
-            .background(Palette.background)
-        } else {
-            HStack(spacing: 0) {
-                ScrollView {
-                    sidebar.padding(16)
-                }
-                .frame(width: 312)
-                .background(Palette.sidebar)
+        }
+    }
 
-                Divider()
-
-                ScrollView {
-                    content.padding(20)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Palette.background)
-
-                if showsInspector {
-                    Divider()
-                    ScrollView {
-                        inspector.padding(16)
-                    }
-                    .frame(width: 302)
-                    .background(Palette.sidebar)
-                }
-            }
+    private var measure: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { contentHeight = geo.size.height }
+                .onChange(of: geo.size.height) { _, height in contentHeight = height }
         }
     }
 }
@@ -66,34 +129,52 @@ struct StageTabBar: View {
     @Binding var selection: StageTab
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(StageTab.allCases) { tab in
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) { selection = tab }
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: tab.symbol)
-                                .font(.system(size: 16, weight: .semibold))
-                            Text(tab.title)
-                                .font(.caption.weight(.bold))
-                        }
-                        .frame(minWidth: 68)
-                        .padding(.vertical, 7)
-                        .padding(.horizontal, 8)
-                        .foregroundStyle(selection == tab ? Color.white : Palette.inkSoft)
-                        .background(
-                            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .fill(selection == tab ? deepTint(tab) : Color.clear)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
+        // All six tabs share the width whenever there is room for them, so a
+        // big screen shows the whole set at once; a narrow window scrolls the
+        // strip instead of hiding a tab behind the edge.
+        ViewThatFits(in: .horizontal) {
+            strip(expanding: true)
+            ScrollView(.horizontal, showsIndicators: false) {
+                strip(expanding: false)
             }
-            .padding(4)
-            .background(Palette.surfaceAlt, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         }
-        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    }
+
+    private func strip(expanding: Bool) -> some View {
+        HStack(spacing: 2) {
+            ForEach(StageTab.allCases) { tab in
+                tabButton(tab)
+                    .frame(maxWidth: expanding ? .infinity : nil)
+            }
+        }
+        .padding(4)
+        .background(Palette.surfaceAlt, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .fixedSize(horizontal: !expanding, vertical: false)
+    }
+
+    private func tabButton(_ tab: StageTab) -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) { selection = tab }
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: tab.symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(tab.title)
+                    .font(.system(size: 10, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(minWidth: 46)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 5)
+            .foregroundStyle(selection == tab ? Color.white : Palette.inkSoft)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(selection == tab ? deepTint(tab) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func deepTint(_ tab: StageTab) -> Color {
