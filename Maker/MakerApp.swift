@@ -9,7 +9,7 @@ import SwiftUI
 struct MakerApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
     }
 }
